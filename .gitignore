@@ -1,0 +1,62 @@
+# Entorno virtual
+venv/
+ENV/
+env/
+.venv/
+
+# Archivos de Python compilados
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Archivos de logs
+*.log
+
+# Archivos de configuración local
+.env
+*.env
+
+# Archivos de bases de datos temporales
+*.sqlite3
+*.db
+
+# Archivos de modelos entrenados
+*.h5
+*.pt
+*.pth
+*.joblib
+*.pkl
+models/
+
+# Archivos de Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# Archivos de datos grandes
+data/
+*.csv
+*.tsv
+*.xlsx
+*.json
+
+# Carpeta de resultados o salidas
+outputs/
+results/
+checkpoints/
+
+# Archivos de FastAPI/Starlette
+instance/
+*.pem
+
+# IDEs y editores
+.vscode/
+.idea/
+*.swp
+
+# Docker
+*.dockerfile
+docker-compose.override.yml
+
+# Otros
+.DS_Store
+Thumbs.db
