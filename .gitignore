@@ -26,11 +26,6 @@ __pycache__/
 *.pth
 *.joblib
 
-models/
-
-# Archivos de Jupyter
-.ipynb_checkpoints
-
 
 # Archivos de datos grandes
 data/
@@ -38,11 +33,6 @@ data/
 *.tsv
 *.xlsx
 
-
-# Carpeta de resultados o salidas
-outputs/
-results/
-checkpoints/
 
 # Archivos de FastAPI/Starlette
 instance/
@@ -53,9 +43,6 @@ instance/
 .idea/
 *.swp
 
-# Docker
-*.dockerfile
-docker-compose.override.yml
 
 # Otros
 .DS_Store
