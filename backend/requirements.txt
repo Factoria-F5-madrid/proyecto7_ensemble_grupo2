@@ -1,0 +1,17 @@
+# Librerías principales
+fastapi
+uvicorn
+
+# Librerías para análisis y visualización
+numpy
+pandas
+matplotlib
+seaborn
+tqdm
+
+# Librerías para machine learning
+scikit-learn
+joblib
+
+# Otros (si usas .env)
+python-dotenv
