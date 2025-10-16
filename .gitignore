@@ -37,7 +37,7 @@ data/
 *.csv
 *.tsv
 *.xlsx
-*.json
+
 
 # Carpeta de resultados o salidas
 outputs/
