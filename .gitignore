@@ -25,12 +25,12 @@ __pycache__/
 *.pt
 *.pth
 *.joblib
-*.pkl
+
 models/
 
 # Archivos de Jupyter
 .ipynb_checkpoints
-*.ipynb
+
 
 # Archivos de datos grandes
 data/
