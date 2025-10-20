@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import hero from "../assets/hero.png";
 import scanBg from "../assets/comida.jpg"; // 🔸 pon tu imagen difuminada aquí
 import { predictCalories } from "../services/PredictCaloriesServices";
@@ -14,6 +14,15 @@ export default function Home() {
   const [predicting, setPredicting] = useState(false);
   const [predictionResult, setPredictionResult] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [isDragActive, setIsDragActive] = useState(false);
+
+  // cleanup preview URL on unmount / when file changes
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const scrollToScan = (e) => {
     e?.preventDefault();
@@ -28,36 +37,62 @@ export default function Home() {
     });
   };
 
-  // handle file selection (file input)
-  const onSelectFile = (e) => {
+  // helper to set file + preview and cleanup previous preview
+  const setFileAndPreview = (file) => {
+    // revoke previous
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    const url = URL.createObjectURL(file);
+    setSelectedFile(file);
+    setPreviewUrl(url);
     setPredictionResult(null);
     setErrorMsg("");
     setUploadProgress(0);
+  };
+
+  // handle file selection (file input)
+  const onSelectFile = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    setSelectedFile(f);
-    setPreviewUrl(URL.createObjectURL(f));
+    setFileAndPreview(f);
   };
 
   // open native file dialog
-  const triggerFileSelect = () => {
-    fileInputRef.current?.click();
-  };
+  // const triggerFileSelect = () => {
+  //   fileInputRef.current?.click();
+  // };
 
   // drag & drop handlers
   const onDropFile = (e) => {
     e.preventDefault();
+    setIsDragActive(false);
     const f = e.dataTransfer.files?.[0];
     if (!f) return;
-    setSelectedFile(f);
-    setPreviewUrl(URL.createObjectURL(f));
-    setPredictionResult(null);
-    setErrorMsg("");
-    setUploadProgress(0);
+    setFileAndPreview(f);
   };
 
   const onDragOver = (e) => {
     e.preventDefault();
+    // show visual cue
+    setIsDragActive(true);
+  };
+
+  const onDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragActive(false);
+  };
+
+  // remove selected file and revoke preview url
+  const clearSelectedFile = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setUploadProgress(0);
+    setPredictionResult(null);
+    setErrorMsg("");
   };
 
   // call backend predict service
@@ -216,19 +251,32 @@ export default function Home() {
               className="bg-white/90 backdrop-blur-md rounded-xl shadow-md p-8"
               onDrop={onDropFile}
               onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
             >
               <div
-                className={`border-2 border-dashed ${
-                  selectedFile ? "border-amber-400" : "border-gray-200"
+                className={`relative border-2 border-dashed ${
+                  selectedFile ? "border-amber-400" : isDragActive ? "border-amber-300 bg-amber-50" : "border-gray-200"
                 } rounded-lg p-6 flex flex-col items-center gap-4 transition`}
               >
                 {/* Preview or icon */}
                 {previewUrl ? (
-                  <img
-                    src={previewUrl}
-                    alt="preview"
-                    className="w-32 h-32 object-cover rounded-lg shadow-md border"
-                  />
+                  <>
+                    <img
+                      src={previewUrl}
+                      alt="preview"
+                      className="w-32 h-32 object-cover rounded-lg shadow-md border"
+                    />
+                    {/* Clear (X) button */}
+                    <button
+                      onClick={clearSelectedFile}
+                      className="absolute -top-2 -right-2 bg-white rounded-full p-1 shadow text-gray-600 hover:bg-gray-100"
+                      aria-label="Remove image"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M6.28 5.22a.75.75 0 011.06 0L10 7.88l2.66-2.66a.75.75 0 111.06 1.06L11.06 8.94l2.66 2.66a.75.75 0 11-1.06 1.06L10 10l-2.66 2.66a.75.75 0 11-1.06-1.06L8.94 8.94 6.28 6.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </>
                 ) : (
                   <>
                     <svg
@@ -251,7 +299,6 @@ export default function Home() {
 
                 <label
                   htmlFor="file"
-                  onClick={triggerFileSelect}
                   className="cursor-pointer px-4 py-2 bg-gray-100 border rounded-md text-sm hover:bg-gray-200"
                 >
                   Selecciona una imagen
