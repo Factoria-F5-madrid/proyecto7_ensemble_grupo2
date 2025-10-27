@@ -1,0 +1,2 @@
+# Este directorio contiene los modelos entrenados
+# Los archivos .h5 y .pkl se generan al ejecutar train_cnn_model.py
