@@ -46,4 +46,6 @@ instance/
 
 # Otros
 .DS_Store
-Thumbs.db
+Thumbs.dbembeddings.pkl
+*.pkl
+embeddings.pkl
