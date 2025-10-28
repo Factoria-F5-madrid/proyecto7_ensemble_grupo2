@@ -1,4 +1,4 @@
-# 🍽️ Food Classification & Calorie Calculator
+# 🍽️ Breakfast Predictor (con cálculo de calorías) 
 
 > Proyecto de clasificación de alimentos y cálculo de calorías utilizando técnicas de Machine Learning y Deep Learning
 
@@ -30,11 +30,12 @@ El proyecto implementa un enfoque de **ensemble learning** combinando múltiples
 ## ✨ Características
 
 - 🖼️ **Clasificación de imágenes** utilizando modelos pre-entrenados (ResNet50)
-- 🤖 **Múltiples algoritmos de ML**: LightGBM, XGBoost, Random Forest
+- 🤖 **Algoritmo de ML**: LightGBM
 - 🧠 **Red neuronal** para comparación de resultados
 - 📊 **Cálculo automático de calorías** basado en la clasificación
 - 🌐 **Interfaz web intuitiva** para subir y analizar imágenes
 - 📈 **API REST** para integración con otras aplicaciones
+- 👩‍💻 **Project** para coordinar el trabajo: https://github.com/orgs/Factoria-F5-madrid/projects/48/views/
 
 ## 🛠️ Tecnologías
 
@@ -42,8 +43,7 @@ El proyecto implementa un enfoque de **ensemble learning** combinando múltiples
 - **Python 3.8+**
 - **TensorFlow/Keras** - Deep Learning y feature extraction
 - **LightGBM** - Gradient boosting optimizado
-- **XGBoost** - Extreme gradient boosting
-- **Scikit-learn** - Random Forest y preprocesamiento
+- **Scikit-learn** - Preprocesamiento
 - **Flask/FastAPI** - API REST
 - **NumPy/Pandas** - Manipulación de datos
 
@@ -53,9 +53,7 @@ El proyecto implementa un enfoque de **ensemble learning** combinando múltiples
 - **CSS/Tailwind** - Estilos
 
 ### Otros
-- **Kaggle** - Entrenamiento en GPU
-- **Colab** - Entrenamiento en GPU
-- **OpenCV** - Procesamiento de imágenes
+- **Kaggle/Colab** - Entrenamiento en GPU
 - **Matplotlib/Seaborn** - Visualización de resultados
 
 ## 📁 Estructura del Proyecto
@@ -63,14 +61,20 @@ El proyecto implementa un enfoque de **ensemble learning** combinando múltiples
 ```
 proyecto7_ensemble_grupo2/
 │
-├── backend/
-│   ├── models/              # Modelos entrenados (.pkl, .h5)
-│   ├── api/                 # Endpoints de la API
-│   ├── utils/               # Funciones auxiliares
-│   │   ├── calorie_calculator.py
-│   │   └── image_processor.py
-│   ├── data/                # Información nutricional
-│   └── app.py               # Aplicación principal
+```
+backend/
+├── main.py                          # API FastAPI (endpoints)
+├── cnn_predictor.py                 # Predictor CNN (inferencia)
+├── train_cnn_model.py               # Script de entrenamiento
+├── requirements.txt                 # Dependencias Python
+│
+├── models/                          # Modelos entrenados
+│   ├── breakfast_cnn_model_optimized.h5   # Modelo CNN (50MB)
+│   ├── class_names.pkl              # 21 clases [list]
+│   ├── training_history.json        # Métricas de entrenamiento
+│   └── training_curves.png          # Gráficas loss/accuracy
+│
+└── __pycache__/                     # Cache Python
 │
 ├── frontend/
 │   ├── src/
@@ -80,21 +84,11 @@ proyecto7_ensemble_grupo2/
 │   └── public/              # Assets estáticos
 │
 ├── notebooks/
-│   ├── 01_data_exploration.ipynb
-│   ├── 02_lightgbm_training.ipynb
-│   ├── 03_xgboost_training.ipynb
-│   ├── 04_random_forest_training.ipynb
-│   └── 05_neural_network_training.ipynb
-│
-├── data/
-│   ├── raw/                 # Datos originales de Kaggle
-│   ├── processed/           # Datos preprocesados
-│   └── nutritional_info.csv # Información calórica
-│
-├── tests/                   # Tests unitarios
+│   ├── EDA.ipynb
+│   └── Lightgbm.ipynb
+│ │
 ├── requirements.txt         # Dependencias Python
-├── README.md
-└── LICENSE
+└── README.md
 
 ```
 
@@ -124,6 +118,124 @@ pip install -r requirements.txt
 cd backend
 python app.py
 ```
+
+
+# 🧠 Backend CNN - Documentación Técnica 
+
+## 1. Overview del Sistema
+
+### 1.1 Descripción General
+
+Este backend implementa un **sistema de clasificación de alimentos** usando **Deep Learning** con las siguientes características:
+
+- **Objetivo**: Clasificar imágenes de desayunos en 21 categorías y estimar calorías
+- **Modelo**: Transfer Learning con MobileNetV2 (pre-entrenado en ImageNet)
+- **Dataset**: Food-101 subset (21 clases de desayunos, ~21,000 imágenes)
+- **Input**: Imágenes RGB 224x224 píxeles
+- **Output**: Clase predicha, confianza, calorías estimadas, información nutricional
+
+### 1.2 Arquitectura Completa del Sistema
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         SISTEMA COMPLETO                        │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────┐      ┌──────────────┐      ┌─────────────────┐
+│   FRONTEND  │─────▶│    BACKEND   │─────▶│  MODELO CNN    │
+│   (React)   │      │   (FastAPI)  │      │  (MobileNetV2)  │
+└─────────────┘      └──────────────┘      └─────────────────┘
+     │                      │                       │
+     │ HTTP POST            │ Procesa imagen        │ Predice
+     │ /predict             │ & ejecuta modelo      │ clase + conf
+     │                      │                       │
+     └──────────────────────┴───────────────────────┘
+```
+
+### 1.3 Flujo de Datos Completo
+
+```
+PREDICCIÓN EN TIEMPO REAL (Inferencia)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Usuario sube imagen
+         │
+         ▼
+┌─────────────────────┐
+│  1. RECEPCIÓN       │  Frontend → Backend (HTTP POST)
+│  - Formato: JPG/PNG │  Endpoint: /predict
+│  - Max size: 10MB   │
+└─────────────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  2. VALIDACIÓN      │  Backend valida tipo de archivo
+│  - Check MIME type  │  Verifica que sea imagen válida
+│  - Leer bytes       │
+└─────────────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  3. PREPROCESAMIENTO│  CNNPredictor.preprocess_image()
+│  - PIL.Image.open() │  1. Convertir a RGB
+│  - Resize 224x224   │  2. Normalizar [0,1]
+│  - Normalizar /255  │  3. Expandir dimensión batch
+│  - Shape: (1,224,   │
+│    224,3)           │
+└─────────────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  4. PREDICCIÓN CNN  │  model.predict(img_array)
+│  - MobileNetV2      │  Forward pass completo
+│  - 21 logits        │  Salida: probabilidades [0,1]
+│  - Softmax final    │
+└─────────────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  5. POST-PROCESO    │  Interpretar resultados
+│  - Argmax (clase)   │  predicted_class = clases[argmax]
+│  - Confianza        │  confidence = max(probs)
+│  - Top-3 clases     │  top3 = argsort()[-3:]
+└─────────────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  6. ENRIQUECIMIENTO │  Añadir información nutricional
+│  - Lookup calorías  │  nutrition_data[predicted_class]
+│  - Calcular porción │  calories = cal_per_100g * 1.5
+│  - Proteínas, carbs │
+└─────────────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  7. RESPUESTA JSON  │  Return JSONResponse
+│  - predicted_class  │  {
+│  - confidence       │    "predicted_class": "pancakes",
+│  - calories         │    "confidence": 0.89,
+│  - nutrition        │    "estimated_calories": 340,
+│  - top_predictions  │    ...
+│  - model_info       │  }
+└─────────────────────┘
+         │
+         ▼
+    Usuario ve resultado
+```
+
+### 1.4 Stack Tecnológico
+
+| Componente | Tecnología | Versión | Propósito |
+|------------|------------|---------|-----------|
+| **Framework Web** | FastAPI | 0.104.1 | API REST asíncrona |
+| **Servidor ASGI** | Uvicorn | 0.24.0 | Servidor de producción |
+| **Deep Learning** | TensorFlow/Keras | 2.20.0 | Modelo CNN |
+| **Transfer Learning** | MobileNetV2 | ImageNet | Feature extraction |
+| **Procesamiento Imágenes** | Pillow | 10.1.0 | Lectura/resize |
+| **Arrays Numéricos** | NumPy | 1.26+ | Operaciones matriciales |
+| **Serialización** | Pickle | stdlib | Guardar class_names |
+| **Validación** | Pydantic | (FastAPI) | Validación requests |
+
 
 ### Frontend
 
@@ -171,8 +283,6 @@ print(f"Confianza: {result['confidence']:.2%}")
 print(f"Calorías: {result['calories']} kcal")
 ```
 
-### Ejemplo con Python
-
 ```python
 from backend.utils.image_processor import load_and_preprocess_image
 from backend.utils.calorie_calculator import get_calories
@@ -195,35 +305,6 @@ calories = get_calories(food_class)
 print(f"Identificado: {food_class}")
 print(f"Calorías: {calories} kcal")
 ```
-
-## 🤖 Modelos
-
-### 1. LightGBM
-- **Feature extraction**: ResNet50 (ImageNet)
-- **Accuracy**: ~65%
-- **F1-Score**: 0.65
-- **Ventajas**: Rápido, eficiente en memoria
-
-### 2. XGBoost
-- **Feature extraction**: ResNet50 (ImageNet)
-- **Accuracy**: ~XX%
-- **F1-Score**: X.XX
-- **Ventajas**: Robusto contra overfitting
-
-### 3. Random Forest
-- **Feature extraction**: ResNet50 (ImageNet)
-- **Accuracy**: ~XX%
-- **F1-Score**: X.XX
-- **Ventajas**: Interpretable, baseline sólido
-
-### 4. Red Neuronal
-- **Arquitectura**: Transfer Learning con ResNet50
-- **Accuracy**: ~XX%
-- **F1-Score**: X.XX
-- **Ventajas**: Mejor captura de features complejos
-
-### Ensemble Final
-Combinación ponderada de los 4 modelos para maximizar precisión.
 
 ## 📊 Dataset
 
@@ -252,37 +333,6 @@ edamame, eggs_benedict, escargots, falafel
 'french_toast', 'grilled_cheese_sandwich', 'huevos_rancheros', 'omelette', 'pancakes',
 'strawberry_shortcake', 'waffles'
 ```
-
-### Preprocesamiento
-1. Resize a 224x224 píxeles
-2. Normalización con ImageNet stats
-3. Augmentation (rotación, flip, zoom)
-4. Feature extraction con ResNet50
-
-## 📈 Resultados
-
-### Métricas Generales
-
-| Modelo | Accuracy | F1-Score | Tiempo Inferencia |
-|--------|----------|----------|-------------------|
-| LightGBM | 65.46% | 0.6529 | ~50ms |
-| XGBoost | XX.XX% | X.XXXX | ~XXms |
-| Random Forest | XX.XX% | X.XXXX | ~XXms |
-| Neural Network | XX.XX% | X.XXXX | ~XXms |
-| **Ensemble** | **XX.XX%** | **X.XXXX** | ~XXms |
-
-### Clases con Mejor Performance
-1. **Churros**: F1 = 0.825
-2. **Donuts**: F1 = 0.XXX
-3. **Club Sandwich**: F1 = 0.XXX
-
-### Clases con Peor Performance
-1. **Apple Pie**: F1 = 0.403
-2. **XXX**: F1 = 0.XXX
-3. **XXX**: F1 = 0.XXX
-
-### Visualizaciones
-
 
 ## 👥 Equipo
 
@@ -320,66 +370,3 @@ Para preguntas o sugerencias:
 - 🐛 Issues: [GitHub Issues](https://github.com/Factoria-F5-madrid/proyecto7_ensemble_grupo2/issues)
 
 ---
-
-
-
-
-### 2. Environment Setup
-
-You can choose between using a Dev Container (recommended for a consistent environment) or a standard Python virtual environment.
-
-#### Option A: Using Dev Containers (Recommended)
-
-This method uses Docker to create a fully configured and isolated development environment.
-
-1.  Open the cloned project folder in **Visual Studio Code**.
-2.  VS Code will automatically detect the Dev Container configuration (`.devcontainer/devcontainer.json`) and show a notification in the bottom-right corner.
-3.  Click on **"Reopen in Container"**.
-4.  Wait for VS Code to build the Docker image and start the container. This might take a few minutes on the first run.
-
-Once the container is running, you will have a terminal in a ready-to-use environment. To install the project's dependencies, run:
-
-```bash
-pip install -r requirements.txt
-```
-
-> **Pro-tip:** You can automate this step by uncommenting the `postCreateCommand` line in the `.devcontainer/devcontainer.json` file.
-
-#### Option B: Using a Python Virtual Environment
-
-If you prefer not to use Docker, you can set up a local virtual environment.
-
-1.  **Create a virtual environment:**
-
-    From the project's root directory, run the following command. We'll name the environment `venv`.
-
-    ```bash
-    python3 -m venv venv
-    ```
-
-2.  **Activate the virtual environment:**
-
-    -   **On macOS and Linux:**
-        ```bash
-        source venv/bin/activate
-        ```
-
-    -   **On Windows:**
-        ```bash
-        .\venv\Scripts\activate
-        ```
-
-    Your terminal prompt should now be prefixed with `(venv)`, indicating the environment is active.
-
-3.  **Install dependencies:**
-
-    With the virtual environment active, install the required libraries:
-
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-## 💻 Usage
-
-Once your environment is set up, you can run the backend and frontend services. The recommended way is using Docker Compose, which orchestrates both services.
-
