@@ -40,7 +40,7 @@ app.add_middleware(
 # Inicializar predictor CNN
 logger.info("🔄 Inicializando predictor CNN...")
 cnn_predictor = CNNPredictor(
-    model_path='models/breakfast_cnn_model.h5',
+    model_path='models/breakfast_cnn_model_optimized.h5',
     class_names_path='models/class_names.pkl'
 )
 

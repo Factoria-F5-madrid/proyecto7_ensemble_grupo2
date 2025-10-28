@@ -1,13 +1,28 @@
 """
-Script para entrenar un modelo CNN real usando Transfer Learning con MobileNetV2
-Dataset: Food101 Desayuno (21 clases)
+🚀 MODELO CNN OPTIMIZADO v3.2 - Transfer Learning
+====================================================
+Transfer Learning con MobileNetV2 + Advanced Regularization
+Dataset: Food101 Desayuno (21 clases, 224x224, uint8)
+
+Arquitectura:
+- MobileNetV2 (ImageNet pre-trained)
+- DataGenerator (carga eficiente)
+- Advanced Augmentation (9 transformaciones)
+- Cosine Learning Rate + Warmup
+- Label Smoothing + L2 Regularization
+
+Target: Test Accuracy 75-80%, Overfitting <5%
 """
 import os
 import sys
+import json
+from pathlib import Path
 
-# Configurar TensorFlow ANTES de importarlo (evita bloqueos de mutex)
+# ============================================================================
+# CONFIGURACIÓN DE ENTORNO
+# ============================================================================
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 import numpy as np
 import pickle
@@ -16,396 +31,564 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 # Importar TensorFlow
-print("🔄 Inicializando TensorFlow (esto puede tardar 30-60 segundos)...")
+print("🔄 Inicializando TensorFlow...")
 try:
     import tensorflow as tf
-    # Configuración adicional para evitar bloqueos
-    tf.config.threading.set_inter_op_parallelism_threads(1)
-    tf.config.threading.set_intra_op_parallelism_threads(1)
-
     from tensorflow import keras
     from tensorflow.keras import layers
     from tensorflow.keras.applications import MobileNetV2
-    print(f"✅ TensorFlow version: {tf.__version__}")
+
+    print(f"✅ TensorFlow {tf.__version__} cargado correctamente!")
 except ImportError:
     print("❌ Error: TensorFlow no está instalado.")
     print("   Ejecuta: pip install tensorflow==2.20.0")
     sys.exit(1)
 
-print("✅ TensorFlow cargado correctamente!")
 print()
 
 # ============================================================================
 # CONFIGURACIÓN
 # ============================================================================
-PKL_PATH = '../notebooks/data/desayuno_preprocessed/food101_desayuno_preprocessed.pkl'
-NPZ_DIR = '../notebooks/data/desayuno_preprocessed/npz_files/'
-MODEL_SAVE_PATH = 'models/breakfast_cnn_model.h5'
-CLASS_NAMES_PATH = 'models/class_names.pkl'
-HISTORY_PATH = 'models/training_history.pkl'
+PKL_PATH = Path('../notebooks/data/desayuno_preprocessed/food101_desayuno_preprocessed.pkl')
+NPZ_DIR = Path('../notebooks/data/desayuno_preprocessed/npz_files')
+MODEL_DIR = Path('models')
+MODEL_DIR.mkdir(exist_ok=True)
 
-# Hiperparámetros
-IMG_SIZE = (224, 224, 3)
-BATCH_SIZE = 32
-EPOCHS = 50  # Aumentado de 30 a 50 para mejor aprendizaje
-LEARNING_RATE = 0.001  # Se usará 0.0001 en fase 2 de fine-tuning
+MODEL_SAVE_PATH = MODEL_DIR / 'breakfast_cnn_model_optimized.h5'
+CLASS_NAMES_PATH = MODEL_DIR / 'class_names.pkl'
+HISTORY_PATH = MODEL_DIR / 'training_history.json'
+METRICS_PATH = MODEL_DIR / 'training_curves.png'
+
+# ⭐ HIPERPARÁMETROS OPTIMIZADOS - REDUCIR OVERFITTING
+IMG_SIZE = 224  # Input nativo 224x224 (SIN redimensionamiento)
+BATCH_SIZE = 16  # Reducido para 224x224 (evita OOM)
+EPOCHS = 30  # Suficiente con learning rate schedule
+INITIAL_LR = 1e-3  # Learning rate inicial (con warmup)
+MIN_LR = 1e-6  # Learning rate mínimo
+WARMUP_EPOCHS = 3  # Epochs de warmup
+LABEL_SMOOTHING = 0.2  # Incrementado de 0.1 a 0.2 (reduce overfitting)
+DROPOUT_RATE = 0.5  # Incrementado de 0.4 a 0.5 (más regularización)
+L2_REGULARIZATION = 5e-4  # Incrementado de 1e-4 a 5e-4 (penalizar más los pesos)
 VALIDATION_SPLIT = 0.15
 TEST_SPLIT = 0.15
 
-print("="*70)
-print("🚀 ENTRENAMIENTO DE MODELO CNN PARA CLASIFICACIÓN DE DESAYUNOS")
-print("="*70)
+print("="*80)
+print("🚀 ENTRENAMIENTO CNN - FOOD-101 BREAKFAST CLASSIFIER (21 CLASES)")
+print("="*80)
+print(f"\n📊 Configuración:")
+print(f"   • Modelo: MobileNetV2 (Transfer Learning)")
+print(f"   • Input: {IMG_SIZE}x{IMG_SIZE}x3")
+print(f"   • Batch Size: {BATCH_SIZE}")
+print(f"   • Epochs: {EPOCHS}")
+print(f"   • Learning Rate: {INITIAL_LR} → {MIN_LR} (Cosine Annealing)")
+print(f"   • Regularización: Dropout {DROPOUT_RATE}, Label Smoothing {LABEL_SMOOTHING}, L2 {L2_REGULARIZATION}")
+print("="*80)
 
 # ============================================================================
-# PASO 1: CARGAR DATASET
+# DATAGENERATOR EFICIENTE (SIN CARGA COMPLETA EN RAM)
 # ============================================================================
-print("\n[1/7] 🔄 Cargando dataset preprocesado...")
+class OptimizedDataGenerator(keras.utils.Sequence):
+    """
+    Generador que carga imágenes por lotes desde NPZ
+    Evita cargar 20,987 imágenes en RAM (3.5GB)
+    """
 
-if not os.path.exists(PKL_PATH):
-    print(f"❌ Error: No se encuentra el archivo {PKL_PATH}")
+    def __init__(self, npz_files, npz_dir, batch_size=16, shuffle=True,
+                 augment=False, num_classes=21):
+        super().__init__()  # ✅ AGREGADO: Llamar al constructor padre
+        self.npz_dir = Path(npz_dir)
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.augment = augment
+        self.num_classes = num_classes
+
+        # Pre-cargar índices (no datos)
+        self.samples = []
+        for npz_file in npz_files:
+            npz_path = self.npz_dir / Path(npz_file).name
+            with np.load(npz_path) as data:
+                n_samples = len(data['y'])
+                for idx in range(n_samples):
+                    self.samples.append((npz_path, idx))
+
+        self.indices = np.arange(len(self.samples))
+        if self.shuffle:
+            np.random.shuffle(self.indices)
+
+    def __len__(self):
+        return int(np.ceil(len(self.samples) / self.batch_size))
+
+    def __getitem__(self, batch_idx):
+        """Carga UN batch desde disco"""
+        batch_indices = self.indices[
+            batch_idx * self.batch_size:(batch_idx + 1) * self.batch_size
+        ]
+
+        X_batch = []
+        y_batch = []
+
+        # Agrupar por archivo NPZ para minimizar lecturas
+        npz_groups = {}
+        for idx in batch_indices:
+            npz_path, sample_idx = self.samples[idx]
+            if npz_path not in npz_groups:
+                npz_groups[npz_path] = []
+            npz_groups[npz_path].append(sample_idx)
+
+        # Cargar datos
+        for npz_path, sample_indices in npz_groups.items():
+            with np.load(npz_path) as data:
+                X_batch.append(data['X'][sample_indices])
+                y_batch.append(data['y'][sample_indices])
+
+        X = np.concatenate(X_batch, axis=0).astype('float32') / 255.0
+        y = np.concatenate(y_batch, axis=0)
+
+        # One-hot encoding
+        y = keras.utils.to_categorical(y, self.num_classes)
+
+        # Data Augmentation (solo en train)
+        if self.augment:
+            X = self._augment_batch(X)
+
+        return X, y
+
+    def _augment_batch(self, X):
+        """
+        Data Augmentation agresivo usando TensorFlow (reduce overfitting)
+        Añadidas más transformaciones para mejor generalización
+        """
+        import tensorflow as tf
+
+        augmented = []
+
+        for img in X:
+            # Convertir a tensor
+            img_tensor = tf.constant(img, dtype=tf.float32)
+
+            # Random Flip Horizontal (75% probabilidad)
+            if np.random.rand() > 0.25:
+                img_tensor = tf.image.flip_left_right(img_tensor)
+
+            # Random Rotation (-15° a +15°)
+            if np.random.rand() > 0.3:
+                angle = np.random.uniform(-15, 15) * (np.pi / 180)
+                img_tensor = tfa.image.rotate(img_tensor, angle) if 'tfa' in dir() else img_tensor
+
+            # Random Brightness (más agresivo)
+            if np.random.rand() > 0.3:
+                img_tensor = tf.image.random_brightness(img_tensor, max_delta=0.3)
+
+            # Random Contrast (más variación)
+            if np.random.rand() > 0.3:
+                img_tensor = tf.image.random_contrast(img_tensor, lower=0.7, upper=1.3)
+
+            # Random Saturation (más variación)
+            if np.random.rand() > 0.3:
+                img_tensor = tf.image.random_saturation(img_tensor, lower=0.7, upper=1.3)
+
+            # Random Hue (más agresivo)
+            if np.random.rand() > 0.3:
+                img_tensor = tf.image.random_hue(img_tensor, max_delta=0.15)
+
+            # Random Zoom (90%-110%)
+            if np.random.rand() > 0.4:
+                zoom_factor = np.random.uniform(0.9, 1.1)
+                new_size = int(224 * zoom_factor)
+                img_tensor = tf.image.resize(img_tensor, [new_size, new_size])
+                img_tensor = tf.image.resize_with_crop_or_pad(img_tensor, 224, 224)
+
+            # Cutout (borrar parche aleatorio 10% de las veces)
+            if np.random.rand() > 0.9:
+                h, w = 224, 224
+                cutout_size = 40
+                y_start = np.random.randint(0, h - cutout_size)
+                x_start = np.random.randint(0, w - cutout_size)
+                img_array = img_tensor.numpy()
+                img_array[y_start:y_start+cutout_size, x_start:x_start+cutout_size] = 0
+                img_tensor = tf.constant(img_array, dtype=tf.float32)
+
+            # Clip valores a [0, 1]
+            img_tensor = tf.clip_by_value(img_tensor, 0.0, 1.0)
+
+            # Convertir de vuelta a numpy
+            augmented.append(img_tensor.numpy())
+
+        return np.array(augmented, dtype=np.float32)
+
+    def on_epoch_end(self):
+        """Shuffle al final de cada epoch"""
+        if self.shuffle:
+            np.random.shuffle(self.indices)
+
+
+# ============================================================================
+# CUSTOM CALLBACKS
+# ============================================================================
+class WarmUpCosineDecay(keras.callbacks.Callback):
+    """
+    Learning Rate Scheduler con Warmup + Cosine Annealing
+    Mejora convergencia y evita overfitting
+    """
+    def __init__(self, initial_lr, min_lr, warmup_epochs, total_epochs):
+        super().__init__()
+        self.initial_lr = initial_lr
+        self.min_lr = min_lr
+        self.warmup_epochs = warmup_epochs
+        self.total_epochs = total_epochs
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if epoch < self.warmup_epochs:
+            # Warmup: aumentar linealmente
+            lr = self.initial_lr * (epoch + 1) / self.warmup_epochs
+        else:
+            # Cosine Annealing
+            progress = (epoch - self.warmup_epochs) / (self.total_epochs - self.warmup_epochs)
+            lr = self.min_lr + (self.initial_lr - self.min_lr) * \
+                 0.5 * (1 + np.cos(np.pi * progress))
+
+        # ✅ CORREGIDO para Keras 3.x: asignar directamente al optimizer
+        self.model.optimizer.learning_rate.assign(lr)
+
+        if epoch % 5 == 0:
+            print(f"\n   📉 Learning Rate: {lr:.6f}")
+
+
+# ============================================================================
+# PASO 1: CARGAR METADATA
+# ============================================================================
+print("\n[1/6] � Cargando metadata del dataset...")
+
+if not PKL_PATH.exists():
+    print(f"❌ Error: {PKL_PATH} no encontrado")
     sys.exit(1)
 
-# Cargar el pickle con la información del dataset
 with open(PKL_PATH, 'rb') as f:
     data = pickle.load(f)
 
 npz_files = data['npz_files']
 class_names = data['class_names']
+stats = data['stats']
 
-print(f"   ✅ Clases encontradas: {len(class_names)}")
-print(f"   ✅ Clases: {', '.join(class_names[:5])}... (+{len(class_names)-5} más)")
-print(f"   ✅ Archivos NPZ: {len(npz_files)}")
-
-# ============================================================================
-# PASO 2: CARGAR IMÁGENES Y ETIQUETAS
-# ============================================================================
-print("\n[2/7] 🔄 Cargando imágenes desde archivos NPZ...")
-
-X_list = []
-y_list = []
-
-# Verificar que el directorio NPZ existe
-if not os.path.exists(NPZ_DIR):
-    print(f"❌ Error: No se encuentra el directorio {NPZ_DIR}")
-    sys.exit(1)
-
-for npz_file in tqdm(npz_files, desc="   Cargando NPZ"):
-    # Extraer solo el nombre del archivo (sin el subdirectorio 'npz_files/')
-    npz_filename = os.path.basename(npz_file)
-    npz_path = os.path.join(NPZ_DIR, npz_filename)
-
-    if not os.path.exists(npz_path):
-        print(f"   ⚠️  Advertencia: {npz_filename} no encontrado en {NPZ_DIR}, saltando...")
-        continue
-
-    try:
-        with np.load(npz_path) as npz_data:
-            X_list.append(npz_data['X'])
-            y_list.append(npz_data['y'])
-    except Exception as e:
-        print(f"   ⚠️  Error cargando {npz_file}: {e}")
-        continue
-
-if len(X_list) == 0:
-    print("❌ Error: No se pudieron cargar imágenes del dataset")
-    sys.exit(1)
-
-X = np.concatenate(X_list, axis=0)
-y = np.concatenate(y_list, axis=0)
-
-print(f"\n   ✅ Dataset cargado exitosamente:")
-print(f"      - Imágenes: {X.shape}")
-print(f"      - Etiquetas: {y.shape}")
-print(f"      - Total de muestras: {len(X):,}")
-
-# Verificar distribución de clases
-unique, counts = np.unique(y, return_counts=True)
-print(f"      - Distribución por clase:")
-for idx, count in zip(unique[:5], counts[:5]):
-    print(f"        • {class_names[idx]}: {count} imágenes")
-print(f"        ... (+{len(unique)-5} clases más)")
-
-# ============================================================================
-# PASO 3: PREPROCESAMIENTO
-# ============================================================================
-print("\n[3/7] 🔄 Preprocesando datos...")
-
-# Normalizar imágenes (0-255 -> 0-1)
-X = X.astype('float32') / 255.0
-print("   ✅ Imágenes normalizadas (0-1)")
-
-# Convertir etiquetas a one-hot encoding
 num_classes = len(class_names)
-y_categorical = keras.utils.to_categorical(y, num_classes)
-print(f"   ✅ Etiquetas convertidas a one-hot encoding ({num_classes} clases)")
 
-# Data Augmentation para mejorar generalización
-print("   🔄 Configurando Data Augmentation...")
-data_augmentation = keras.Sequential([
-    layers.RandomFlip("horizontal"),
-    layers.RandomRotation(0.1),
-    layers.RandomZoom(0.1),
-    layers.RandomContrast(0.1),
-])
-print("   ✅ Data Augmentation configurado (flip, rotation, zoom, contrast)")
+print(f"   ✅ Versión: {stats.get('version', 'N/A')}")
+print(f"   ✅ Clases: {num_classes}")
+print(f"   ✅ Total imágenes: {stats['total_imagenes']:,}")
+print(f"   ✅ Archivos NPZ: {len(npz_files)}")
+print(f"   ✅ Tamaño: {stats['target_size']}x{stats['target_size']} {stats['dtype']}")
+print(f"   ✅ Compatible con: {stats.get('compatible_with', 'N/A')}")
+
 
 # ============================================================================
-# PASO 4: DIVIDIR EN TRAIN/VAL/TEST
+# PASO 2: SPLIT DATASET (TRAIN/VAL/TEST)
 # ============================================================================
-print("\n[4/7] 🔄 Dividiendo dataset en train/val/test...")
+print("\n[2/6] � Dividiendo dataset...")
 
-# Primero separar test
-X_temp, X_test, y_temp, y_test = train_test_split(
-    X, y_categorical,
-    test_size=TEST_SPLIT,
-    random_state=42,
-    stratify=y
+# Dividir archivos NPZ (no imágenes individuales)
+train_npz, temp_npz = train_test_split(
+    npz_files, test_size=VALIDATION_SPLIT + TEST_SPLIT, random_state=42
+)
+val_npz, test_npz = train_test_split(
+    temp_npz, test_size=TEST_SPLIT/(VALIDATION_SPLIT + TEST_SPLIT), random_state=42
 )
 
-# Luego separar train y validation
-X_train, X_val, y_train, y_val = train_test_split(
-    X_temp, y_temp,
-    test_size=VALIDATION_SPLIT/(1-TEST_SPLIT),
-    random_state=42,
-    stratify=y_temp.argmax(axis=1)
+print(f"   ✅ Train: {len(train_npz)} NPZ files (~{len(train_npz)*20:,} imágenes)")
+print(f"   ✅ Val: {len(val_npz)} NPZ files (~{len(val_npz)*20:,} imágenes)")
+print(f"   ✅ Test: {len(test_npz)} NPZ files (~{len(test_npz)*20:,} imágenes)")
+
+
+# ============================================================================
+# PASO 3: CREAR GENERADORES
+# ============================================================================
+print("\n[3/6] 🔄 Creando generadores de datos...")
+
+train_gen = OptimizedDataGenerator(
+    train_npz, NPZ_DIR,
+    batch_size=BATCH_SIZE,
+    shuffle=True,
+    augment=True,  # Solo train tiene augmentation
+    num_classes=num_classes
 )
 
-print(f"   ✅ Train set: {X_train.shape[0]:,} imágenes ({X_train.shape[0]/len(X)*100:.1f}%)")
-print(f"   ✅ Validation set: {X_val.shape[0]:,} imágenes ({X_val.shape[0]/len(X)*100:.1f}%)")
-print(f"   ✅ Test set: {X_test.shape[0]:,} imágenes ({X_test.shape[0]/len(X)*100:.1f}%)")
+val_gen = OptimizedDataGenerator(
+    val_npz, NPZ_DIR,
+    batch_size=BATCH_SIZE,
+    shuffle=False,
+    augment=False,
+    num_classes=num_classes
+)
+
+test_gen = OptimizedDataGenerator(
+    test_npz, NPZ_DIR,
+    batch_size=BATCH_SIZE,
+    shuffle=False,
+    augment=False,
+    num_classes=num_classes
+)
+
+print(f"   ✅ Train: {len(train_gen)} batches")
+print(f"   ✅ Val: {len(val_gen)} batches")
+print(f"   ✅ Test: {len(test_gen)} batches")
+print(f"   💾 Memoria usada: ~{BATCH_SIZE * IMG_SIZE * IMG_SIZE * 3 * 4 / 1024 / 1024:.1f} MB/batch (NO carga todo)")
+
 
 # ============================================================================
-# PASO 5: CREAR MODELO CNN CON TRANSFER LEARNING
+# PASO 4: CREAR MODELO OPTIMIZADO PARA M2
 # ============================================================================
-print("\n[5/7] 🔄 Creando modelo CNN con Transfer Learning (MobileNetV2)...")
+print("\n[4/6] 🏗️  Construyendo modelo MobileNetV2...")
 
-# Cargar modelo base pre-entrenado (sin la capa de clasificación)
+# Base model con weights de ImageNet
 base_model = MobileNetV2(
-    input_shape=IMG_SIZE,
+    input_shape=(IMG_SIZE, IMG_SIZE, 3),
     include_top=False,
-    weights='imagenet'
+    weights='imagenet',
+    alpha=1.0
 )
 
-# ESTRATEGIA: Fine-tuning en 2 fases
-# Fase 1: Entrenar solo las capas superiores (congelado)
-# Fase 2: Descongelar y entrenar todo con learning rate bajo
+# Fine-tuning: congelar capas excepto últimas 20
+for layer in base_model.layers[:-20]:
+    layer.trainable = False
 
-# Inicialmente congelar el modelo base
-base_model.trainable = False
-print(f"   ✅ Modelo base MobileNetV2 cargado (capas congeladas para fase 1)")
+print(f"   ✅ Base model: MobileNetV2 (ImageNet weights)")
+print(f"   ✅ Capas congeladas: {sum(not l.trainable for l in base_model.layers)}")
+print(f"   ✅ Capas entrenables: {sum(l.trainable for l in base_model.layers)}")
 
 # Construir modelo completo
-# IMPORTANTE: Agregar capa de redimensionamiento porque las imágenes son 48x48 pero MobileNetV2 espera 224x224
-model = keras.Sequential([
-    layers.Input(shape=(48, 48, 3)),  # Input de 48x48
-    data_augmentation,  # ← Data Augmentation (solo se aplica en training)
-    layers.Resizing(224, 224),  # Redimensionar a 224x224 para MobileNetV2
-    base_model,
-    layers.GlobalAveragePooling2D(),
-    layers.BatchNormalization(),
-    layers.Dropout(0.3),
-    layers.Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.01)),
-    layers.BatchNormalization(),
-    layers.Dropout(0.3),
-    layers.Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(0.01)),
-    layers.Dropout(0.2),
-    layers.Dense(num_classes, activation='softmax')
-])
+inputs = layers.Input(shape=(IMG_SIZE, IMG_SIZE, 3), name='input_images')
+x = base_model(inputs, training=True)
 
-# Compilar modelo para FASE 1 (capas superiores)
+# Global Average Pooling
+x = layers.GlobalAveragePooling2D()(x)
+
+# Cabecera de clasificación con regularización
+x = layers.BatchNormalization()(x)
+x = layers.Dropout(DROPOUT_RATE)(x)
+x = layers.Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(L2_REGULARIZATION))(x)
+x = layers.BatchNormalization()(x)
+x = layers.Dropout(DROPOUT_RATE * 0.6)(x)
+outputs = layers.Dense(num_classes, activation='softmax', dtype='float32',
+                      kernel_regularizer=keras.regularizers.l2(L2_REGULARIZATION),
+                      name='predictions')(x)
+
+model = keras.Model(inputs, outputs, name='MobileNetV2_Food21_M2')
+
+# Compilar con Label Smoothing
 model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=LEARNING_RATE),
-    loss='categorical_crossentropy',
-    metrics=['accuracy', keras.metrics.TopKCategoricalAccuracy(k=3, name='top_3_accuracy')]
+    optimizer=keras.optimizers.Adam(learning_rate=INITIAL_LR),
+    loss=keras.losses.CategoricalCrossentropy(label_smoothing=LABEL_SMOOTHING),
+    metrics=[
+        'accuracy',
+        keras.metrics.TopKCategoricalAccuracy(k=3, name='top3_acc')
+    ]
 )
 
-print("\n   ✅ Arquitectura del modelo:")
-print("   " + "="*66)
-model.summary(print_fn=lambda x: print("   " + x))
-print("   " + "="*66)
+print(f"\n   📊 Arquitectura del modelo:")
+model.summary(print_fn=lambda x: print(f"   {x}"))
 
-# Calcular parámetros
 total_params = model.count_params()
 trainable_params = sum([tf.size(w).numpy() for w in model.trainable_weights])
-non_trainable_params = total_params - trainable_params
 
-print(f"\n   📊 Parámetros del modelo:")
-print(f"      - Total: {total_params:,}")
-print(f"      - Entrenables: {trainable_params:,}")
-print(f"      - No entrenables: {non_trainable_params:,}")
+print(f"\n   📊 Parámetros:")
+print(f"      • Total: {total_params:,}")
+print(f"      • Entrenables: {trainable_params:,} ({trainable_params/total_params*100:.1f}%)")
+print(f"      • Frozen: {total_params - trainable_params:,}")
 
 # ============================================================================
-# PASO 6: ENTRENAR MODELO
+# PASO 5: ENTRENAR MODELO
 # ============================================================================
-print("\n[6/7] 🔄 Entrenando modelo...")
-print(f"   ⏱️  Esto puede tardar entre 10-30 minutos dependiendo de tu hardware...")
+print(f"\n[5/6] � Entrenando modelo ({EPOCHS} epochs)...")
+print(f"   ⏱️  Tiempo estimado: 15-30 minutos (depende de hardware)")
 
-# Callbacks
+# Callbacks optimizados para reducir overfitting
 callbacks = [
+    WarmUpCosineDecay(
+        initial_lr=INITIAL_LR,
+        min_lr=MIN_LR,
+        warmup_epochs=WARMUP_EPOCHS,
+        total_epochs=EPOCHS
+    ),
     keras.callbacks.EarlyStopping(
         monitor='val_loss',
-        patience=5,
+        patience=12,  # Aumentado de 8 a 12 (más paciencia para convergencia)
         restore_best_weights=True,
-        verbose=1
-    ),
-    keras.callbacks.ReduceLROnPlateau(
-        monitor='val_loss',
-        factor=0.5,
-        patience=3,
-        min_lr=1e-7,
-        verbose=1
+        verbose=1,
+        min_delta=0.001  # Solo detener si mejora < 0.1%
     ),
     keras.callbacks.ModelCheckpoint(
         MODEL_SAVE_PATH,
         monitor='val_accuracy',
         save_best_only=True,
+        save_weights_only=False,
+        verbose=1
+    ),
+    keras.callbacks.ReduceLROnPlateau(
+        monitor='val_loss',
+        factor=0.5,
+        patience=4,
+        min_lr=MIN_LR,
         verbose=1
     )
 ]
 
-# Entrenar FASE 1: Solo capas superiores
-print("\n   🔄 FASE 1: Entrenando capas superiores (base congelado)...")
-history_phase1 = model.fit(
-    X_train, y_train,
-    validation_data=(X_val, y_val),
-    epochs=10,  # Solo 10 épocas para fase 1
-    batch_size=BATCH_SIZE,
+# Entrenar
+print(f"\n{'='*80}")
+history = model.fit(
+    train_gen,
+    validation_data=val_gen,
+    epochs=EPOCHS,
     callbacks=callbacks,
     verbose=1
+    # ⚠️ 'workers' y 'use_multiprocessing' NO están disponibles en TF 2.20+
+    # El generador ya maneja la carga eficientemente
 )
+print(f"{'='*80}\n")
 
-# FASE 2: Descongelar y Fine-tuning completo
-print("\n   🔄 FASE 2: Fine-tuning completo (descongelando modelo base)...")
+print("✅ Entrenamiento completado!")
 
-# Descongelar el modelo base
-base_model.trainable = True
-print(f"   ✅ Modelo base descongelado")
-
-# Recompilar con learning rate MUY bajo para fine-tuning
-model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=LEARNING_RATE * 0.1),  # 10x más bajo
-    loss='categorical_crossentropy',
-    metrics=['accuracy', keras.metrics.TopKCategoricalAccuracy(k=3, name='top_3_accuracy')]
-)
-
-# Entrenar FASE 2 con modelo completo
-history_phase2 = model.fit(
-    X_train, y_train,
-    validation_data=(X_val, y_val),
-    epochs=EPOCHS - 10,  # Resto de épocas
-    batch_size=BATCH_SIZE,
-    callbacks=callbacks,
-    verbose=1
-)
-
-# Combinar historiales
-history = type('History', (), {})()
-history.history = {
-    key: history_phase1.history[key] + history_phase2.history[key]
-    for key in history_phase1.history.keys()
-}
 
 # ============================================================================
-# PASO 7: EVALUAR MODELO
+# PASO 6: EVALUAR MODELO
 # ============================================================================
-print("\n[7/7] 🔄 Evaluando modelo en test set...")
+print("\n[6/6] � Evaluando modelo en test set...")
 
-test_results = model.evaluate(X_test, y_test, verbose=0)
+test_results = model.evaluate(test_gen, verbose=1)
 test_loss = test_results[0]
-test_accuracy = test_results[1]
-test_top3_accuracy = test_results[2]
+test_acc = test_results[1]
+test_top3_acc = test_results[2]
 
-print(f"\n   📊 Resultados en Test Set:")
-print(f"      - Loss: {test_loss:.4f}")
-print(f"      - Accuracy: {test_accuracy*100:.2f}%")
-print(f"      - Top-3 Accuracy: {test_top3_accuracy*100:.2f}%")
+print(f"\n{'='*80}")
+print(f"� RESULTADOS FINALES:")
+print(f"{'='*80}")
+print(f"   Test Loss: {test_loss:.4f}")
+print(f"   Test Accuracy: {test_acc*100:.2f}%")
+print(f"   Test Top-3 Accuracy: {test_top3_acc*100:.2f}%")
 
-# Calcular métricas de overfitting
-train_accuracy = history.history['accuracy'][-1]
-val_accuracy = history.history['val_accuracy'][-1]
-overfitting = abs(train_accuracy - val_accuracy) * 100
+# Métricas de overfitting
+train_acc = history.history['accuracy'][-1]
+val_acc = history.history['val_accuracy'][-1]
+overfitting = abs(train_acc - val_acc) * 100
 
-print(f"\n   📊 Análisis de Overfitting:")
-print(f"      - Train Accuracy: {train_accuracy*100:.2f}%")
-print(f"      - Val Accuracy: {val_accuracy*100:.2f}%")
-print(f"      - Diferencia: {overfitting:.2f}%")
+print(f"\n   📊 Análisis de Generalización:")
+print(f"      Train Accuracy: {train_acc*100:.2f}%")
+print(f"      Val Accuracy: {val_acc*100:.2f}%")
+print(f"      Diferencia: {overfitting:.2f}%")
 
 if overfitting < 5:
-    print(f"      ✅ Overfitting controlado (<5%)")
+    print(f"      ✅ Excelente generalización (<5%)")
+elif overfitting < 10:
+    print(f"      ✅ Buena generalización (<10%)")
 else:
-    print(f"      ⚠️  Overfitting alto (>5%) - Considera más regularización")
+    print(f"      ⚠️  Overfitting detectado (>10%)")
+
+print(f"{'='*80}")
+
 
 # ============================================================================
-# GUARDAR MODELO Y ARTEFACTOS
+# GUARDAR ARTEFACTOS
 # ============================================================================
-print("\n💾 Guardando modelo y artefactos...")
+print("\n💾 Guardando artefactos...")
 
-# Crear directorio si no existe
-os.makedirs('models', exist_ok=True)
+# Modelo ya guardado por ModelCheckpoint (best weights)
+print(f"   ✅ Modelo guardado: {MODEL_SAVE_PATH}")
 
-# Guardar modelo
-model.save(MODEL_SAVE_PATH)
-print(f"   ✅ Modelo guardado en: {MODEL_SAVE_PATH}")
-
-# Guardar nombres de clases
+# Nombres de clases
 with open(CLASS_NAMES_PATH, 'wb') as f:
     pickle.dump(class_names, f)
-print(f"   ✅ Nombres de clases guardados en: {CLASS_NAMES_PATH}")
+print(f"   ✅ Class names: {CLASS_NAMES_PATH}")
 
-# Guardar historial de entrenamiento
-with open(HISTORY_PATH, 'wb') as f:
-    pickle.dump(history.history, f)
-print(f"   ✅ Historial de entrenamiento guardado en: {HISTORY_PATH}")
+# Historial (JSON para compatibilidad)
+history_dict = {k: [float(v) for v in vals] for k, vals in history.history.items()}
+with open(HISTORY_PATH, 'w') as f:
+    json.dump(history_dict, f, indent=2)
+print(f"   ✅ Training history: {HISTORY_PATH}")
+
 
 # ============================================================================
-# GENERAR GRÁFICAS
+# VISUALIZACIONES
 # ============================================================================
-print("\n📊 Generando gráficas de entrenamiento...")
+print("\n📊 Generando gráficas...")
 
-fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
 # Accuracy
-axes[0].plot(history.history['accuracy'], label='Train Accuracy', linewidth=2)
-axes[0].plot(history.history['val_accuracy'], label='Val Accuracy', linewidth=2)
-axes[0].set_title('Model Accuracy', fontsize=14, fontweight='bold')
-axes[0].set_xlabel('Epoch')
-axes[0].set_ylabel('Accuracy')
-axes[0].legend()
-axes[0].grid(True, alpha=0.3)
+axes[0, 0].plot(history.history['accuracy'], label='Train', linewidth=2)
+axes[0, 0].plot(history.history['val_accuracy'], label='Val', linewidth=2)
+axes[0, 0].set_title('Model Accuracy', fontsize=14, fontweight='bold')
+axes[0, 0].set_xlabel('Epoch')
+axes[0, 0].set_ylabel('Accuracy')
+axes[0, 0].legend()
+axes[0, 0].grid(True, alpha=0.3)
 
 # Loss
-axes[1].plot(history.history['loss'], label='Train Loss', linewidth=2)
-axes[1].plot(history.history['val_loss'], label='Val Loss', linewidth=2)
-axes[1].set_title('Model Loss', fontsize=14, fontweight='bold')
-axes[1].set_xlabel('Epoch')
-axes[1].set_ylabel('Loss')
-axes[1].legend()
-axes[1].grid(True, alpha=0.3)
+axes[0, 1].plot(history.history['loss'], label='Train', linewidth=2)
+axes[0, 1].plot(history.history['val_loss'], label='Val', linewidth=2)
+axes[0, 1].set_title('Model Loss', fontsize=14, fontweight='bold')
+axes[0, 1].set_xlabel('Epoch')
+axes[0, 1].set_ylabel('Loss')
+axes[0, 1].legend()
+axes[0, 1].grid(True, alpha=0.3)
+
+# Top-3 Accuracy
+axes[1, 0].plot(history.history['top3_acc'], label='Train Top-3', linewidth=2)
+axes[1, 0].plot(history.history['val_top3_acc'], label='Val Top-3', linewidth=2)
+axes[1, 0].set_title('Top-3 Accuracy', fontsize=14, fontweight='bold')
+axes[1, 0].set_xlabel('Epoch')
+axes[1, 0].set_ylabel('Top-3 Accuracy')
+axes[1, 0].legend()
+axes[1, 0].grid(True, alpha=0.3)
+
+# Resumen
+axes[1, 1].axis('off')
+summary_text = f"""
+📊 RESUMEN FINAL
+
+Modelo: MobileNetV2 Transfer Learning
+Dataset: Food-101 Desayuno (21 clases)
+
+Test Accuracy: {test_acc*100:.2f}%
+Test Top-3: {test_top3_acc*100:.2f}%
+Test Loss: {test_loss:.4f}
+
+Train Accuracy: {train_acc*100:.2f}%
+Val Accuracy: {val_acc*100:.2f}%
+Overfitting: {overfitting:.2f}%
+
+Total Epochs: {len(history.history['loss'])}
+Best Epoch: {np.argmax(history.history['val_accuracy']) + 1}
+
+Hiperparámetros:
+• Batch Size: {BATCH_SIZE}
+• Initial LR: {INITIAL_LR}
+• Min LR: {MIN_LR}
+• Dropout: {DROPOUT_RATE}
+• Label Smoothing: {LABEL_SMOOTHING}
+• L2 Regularization: {L2_REGULARIZATION}
+"""
+
+axes[1, 1].text(0.1, 0.5, summary_text, fontsize=11, family='monospace',
+                verticalalignment='center')
 
 plt.tight_layout()
-plt.savefig('models/training_curves.png', dpi=150, bbox_inches='tight')
-print(f"   ✅ Gráficas guardadas en: models/training_curves.png")
+plt.savefig(METRICS_PATH, dpi=150, bbox_inches='tight')
+print(f"   ✅ Gráficas: {METRICS_PATH}")
+
 
 # ============================================================================
 # RESUMEN FINAL
 # ============================================================================
-print("\n" + "="*70)
+print(f"\n{'='*80}")
 print("🎉 ¡ENTRENAMIENTO COMPLETADO EXITOSAMENTE!")
-print("="*70)
+print(f"{'='*80}")
+
 print(f"\n📁 Archivos generados:")
-print(f"   • {MODEL_SAVE_PATH} - Modelo entrenado")
-print(f"   • {CLASS_NAMES_PATH} - Nombres de clases")
-print(f"   • {HISTORY_PATH} - Historial de entrenamiento")
-print(f"   • models/training_curves.png - Gráficas de entrenamiento")
+print(f"   • {MODEL_SAVE_PATH}")
+print(f"   • {CLASS_NAMES_PATH}")
+print(f"   • {HISTORY_PATH}")
+print(f"   • {METRICS_PATH}")
 
-print(f"\n📊 Métricas Finales:")
-print(f"   • Test Accuracy: {test_accuracy*100:.2f}%")
-print(f"   • Test Top-3 Accuracy: {test_top3_accuracy*100:.2f}%")
-print(f"   • Overfitting: {overfitting:.2f}%")
+print(f"\n📊 Resultados:")
+print(f"   • Test Accuracy: {test_acc*100:.2f}%")
+print(f"   • Test Top-3 Accuracy: {test_top3_acc*100:.2f}%")
+print(f"   • Generalización: {100 - overfitting:.2f}%")
 
-print(f"\n🚀 Próximos pasos:")
-print(f"   1. Ejecuta el backend: uvicorn main:app --reload")
-print(f"   2. Prueba la API con imágenes reales")
-print(f"   3. Inicia el frontend para ver la aplicación completa")
-
-print("\n" + "="*70)

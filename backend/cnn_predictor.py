@@ -21,7 +21,7 @@ except ImportError:
     print("⚠️  TensorFlow no disponible - usando modo fallback")
 
 class CNNPredictor:
-    def __init__(self, model_path='models/breakfast_cnn_model.h5',
+    def __init__(self, model_path='models/breakfast_cnn_model_optimized.h5',
                  class_names_path='models/class_names.pkl'):
         """
         Inicializa el predictor CNN con el modelo entrenado
