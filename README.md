@@ -577,23 +577,3 @@ Este proyecto está bajo la licencia MIT. Ver el archivo `LICENSE` para más det
 Desarrollado por **Grupo 2 - Proyecto 7 Ensemble**
 Factoría F5 Madrid - Promoción 2025
 
----
-
-## 🙏 Agradecimientos
-
-- **Food-101 Dataset** - ETH Zurich
-- **MobileNetV2** - Google Research
-- **FastAPI** - Sebastián Ramírez
-- **TensorFlow/Keras** - Google Brain Team
-
----
-
-**📧 Contacto:** factoriaf5.madrid@example.com
-**🌐 GitHub:** [Factoria-F5-madrid/proyecto7_ensemble_grupo2](https://github.com/Factoria-F5-madrid/proyecto7_ensemble_grupo2)
-
----
-
-<div align="center">
-  <strong>⭐ Si este proyecto te fue útil, dale una estrella en GitHub ⭐</strong>
-</div>
-
