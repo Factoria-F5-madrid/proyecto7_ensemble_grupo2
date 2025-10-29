@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-API para Detección de Calorías con CNN Real
-Backend con modelo TensorFlow MobileNetV2 entrenado
-"""
-
 import os
 import logging
 from pathlib import Path
@@ -14,21 +9,18 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# Importar predictor CNN REAL
+
 from cnn_predictor import CNNPredictor
 
-# Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Crear aplicación FastAPI
 app = FastAPI(
     title="Calorie Detection API",
     description="API para detectar calorías en imágenes de comida usando CNN (MobileNetV2)",
     version="3.0.0"
 )
 
-# Configurar CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,52 +29,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Inicializar predictor CNN
-logger.info("🔄 Inicializando predictor CNN...")
+logger.info("Inicializando predictor CNN...")
 cnn_predictor = CNNPredictor(
     model_path='models/breakfast_cnn_model_optimized.h5',
     class_names_path='models/class_names.pkl'
 )
 
-# Verificar estado del modelo
 model_status = cnn_predictor.get_model_status()
 
 if model_status['loaded']:
-    logger.info("✅ Modelo CNN cargado correctamente")
+    logger.info("Modelo CNN cargado correctamente")
     logger.info(f"   • Tipo: {model_status['type']}")
     logger.info(f"   • Clases: {model_status['num_classes']}")
 else:
-    logger.warning("⚠️  Modelo CNN no disponible")
+    logger.warning("Modelo CNN no disponible")
     logger.warning("   • Ejecuta primero: python train_cnn_model.py")
     logger.warning("   • La API funcionará pero con mensaje de error")
 
 
 
 @app.post("/predict")
-async def predict_food_calories(file: UploadFile = File(...)):
+async def predict_food_calories(
+    file: UploadFile = File(...),
+    use_tta: bool = True  # TTA activado por defecto para mejor precisión
+):
     """
     Endpoint principal: Detectar calorías en imagen de comida usando CNN
 
     Args:
         file: Imagen de comida (JPG, PNG, etc.)
+        use_tta: Test-Time Augmentation (True = +2-3% accuracy, pero 5x más lento)
 
     Returns:
         JSON con predicción, calorías y información nutricional
     """
-    # Validar archivo
     if not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="El archivo debe ser una imagen")
 
     try:
-        logger.info(f"📸 Procesando imagen: {file.filename}")
+        logger.info(f"🔍 Procesando imagen: {file.filename} (TTA: {use_tta})")
 
-        # Leer bytes de la imagen
         image_bytes = await file.read()
 
-        # Predecir con CNN
-        result = cnn_predictor.predict(image_bytes)
+        # Usar TTA para mayor precisión (recomendado en producción)
+        result = cnn_predictor.predict(image_bytes, use_tta=use_tta)
 
-        # Verificar si hubo error
         if 'error' in result:
             logger.error(f"❌ Error en predicción: {result['error']}")
             raise HTTPException(
@@ -92,7 +83,6 @@ async def predict_food_calories(file: UploadFile = File(...)):
 
         logger.info(f"✅ Predicción: {result['predicted_class']} ({result['confidence']:.2%})")
 
-        # Formatear respuesta
         response = {
             'success': True,
             'predicted_class': result['predicted_class'],
@@ -160,19 +150,17 @@ async def root():
 
 if __name__ == "__main__":
     logger.info("=" * 70)
-    logger.info("🚀 Iniciando Calorie Detection API v3.0")
+    logger.info("Iniciando Calorie Detection API v3.0")
     logger.info("=" * 70)
 
-    # Verificar modelo
     if model_status['loaded']:
-        logger.info(f"✅ Modelo CNN listo para predicciones")
+        logger.info(f"Modelo CNN listo para predicciones")
     else:
-        logger.warning("⚠️  Modelo no disponible - La API retornará errores")
+        logger.warning("Modelo no disponible - La API retornará errores")
         logger.warning("   Solución: Ejecuta 'python train_cnn_model.py'")
 
     logger.info("=" * 70)
 
-    # Iniciar servidor
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

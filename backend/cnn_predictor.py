@@ -137,12 +137,13 @@ class CNNPredictor:
             print(f"❌ Error preprocesando imagen: {e}")
             raise
 
-    def predict(self, image_bytes):
+    def predict(self, image_bytes, use_tta=False):
         """
         Realiza la predicción sobre la imagen
 
         Args:
             image_bytes: Bytes de la imagen a clasificar
+            use_tta: Si True, usa Test-Time Augmentation para mayor precisión
 
         Returns:
             dict con la predicción y calorías estimadas
@@ -161,8 +162,11 @@ class CNNPredictor:
             # Preprocesar imagen
             img_array = self.preprocess_image(image_bytes)
 
-            # Hacer predicción
-            predictions = self.model.predict(img_array, verbose=0)[0]
+            # Hacer predicción con o sin TTA
+            if use_tta:
+                predictions = self.predict_with_tta(img_array)[0]
+            else:
+                predictions = self.model.predict(img_array, verbose=0)[0]
 
             # Obtener clase predicha y confianza
             predicted_idx = np.argmax(predictions)
@@ -202,7 +206,8 @@ class CNNPredictor:
                 'top_predictions': top_predictions,
                 'model_info': {
                     'type': 'CNN - MobileNetV2',
-                    'num_classes': len(self.class_names)
+                    'num_classes': len(self.class_names),
+                    'tta_enabled': use_tta
                 }
             }
 
@@ -220,6 +225,62 @@ class CNNPredictor:
                 'confidence': 0.0,
                 'calories': 0
             }
+
+    def predict_with_tta(self, img_array, num_augmentations=5):
+        """
+        Test-Time Augmentation: realiza múltiples predicciones con augmentaciones
+        y promedia los resultados para mayor robustez (reduce overfitting en inferencia)
+
+        Args:
+            img_array: Array de la imagen preprocesada
+            num_augmentations: Número de augmentaciones a generar
+
+        Returns:
+            Predicciones promediadas
+        """
+        predictions = []
+
+        # Predicción original
+        predictions.append(self.model.predict(img_array, verbose=0))
+
+        # Predicciones con augmentaciones
+        for _ in range(num_augmentations - 1):
+            augmented = self._tta_augment(img_array.copy())
+            pred = self.model.predict(augmented, verbose=0)
+            predictions.append(pred)
+
+        # Promediar todas las predicciones
+        avg_predictions = np.mean(predictions, axis=0)
+
+        return avg_predictions
+
+    def _tta_augment(self, img_array):
+        """
+        Aplica augmentaciones ligeras para TTA (solo transformaciones que preservan semántica)
+
+        Args:
+            img_array: Array de la imagen (batch, height, width, channels)
+
+        Returns:
+            Imagen augmentada
+        """
+        import tensorflow as tf
+
+        img_tensor = tf.constant(img_array)
+
+        # Flip horizontal (50% probabilidad)
+        if np.random.rand() > 0.5:
+            img_tensor = tf.image.flip_left_right(img_tensor)
+
+        # Pequeño ajuste de brillo (±10%)
+        if np.random.rand() > 0.5:
+            img_tensor = tf.image.random_brightness(img_tensor, max_delta=0.1)
+
+        # Pequeño ajuste de contraste (90%-110%)
+        if np.random.rand() > 0.5:
+            img_tensor = tf.image.random_contrast(img_tensor, lower=0.9, upper=1.1)
+
+        return img_tensor.numpy()
 
     def get_model_status(self):
         """Obtiene el estado del modelo"""
