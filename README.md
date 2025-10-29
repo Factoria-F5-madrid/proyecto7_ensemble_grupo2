@@ -304,7 +304,27 @@ calories = get_calories(food_class)
 
 print(f"Identificado: {food_class}")
 print(f"Calorías: {calories} kcal")
+
+
 ```
+## Resultados finales del CNN
+
+**Test Loss**: 1.5842
+**Test Accuracy**: 72.68%
+**Test Top-3 Accuracy**: 87.73%
+
+#### Análisis de Generalización:
+**Train Accuracy**: 82.50%
+**Val Accuracy**: 71.26%
+**Diferencia**: 11.24%
+**Overfitting detectado**: (>10%)
+
+**Top 5 clases (por F1-score)**:
+1. club_sandwich      - P:0.903 R:0.864 F1:0.883
+2. cup_cakes          - P:0.801 R:0.872 F1:0.835
+3. beignets           - P:0.862 R:0.810 F1:0.835
+4. eggs_benedict      - P:0.817 R:0.838 F1:0.827
+5. croque_madame      - P:0.873 R:0.786 F1:0.827
 
 ## 📊 Dataset
 
